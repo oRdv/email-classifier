@@ -1,16 +1,9 @@
-from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
+from transformers import pipeline
 import PyPDF2
 import re
-import torch
+import numpy as np
 
-classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
-
-model_name = "pierreguillou/gpt2-small-portuguese"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForCausalLM.from_pretrained(model_name)
-
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
+classifier = pipeline("zero-shot-classification", model="joeddav/xlm-roberta-large-xnli")
 
 def extract_text_from_pdf(pdf_file):
     """
@@ -32,45 +25,69 @@ def preprocess_text(text):
 
 def classify_email(text):
     """
-    Classifica o email em produtivo ou improdutivo
+    Classifica o email em produtivo ou improdutivo com regras mais rigorosas
     """
+    unproductive_keywords = [
+        'oi galerinha', 'feliz', 'natal', 'ano novo', 'páscoa', 'feriado',
+        'fim de semana', 'boa sorte', 'parabéns', 'comemoração', 'festa',
+        'agradecimento', 'saudações', 'cumprimentos', 'abraços', 'beijos',
+        'alegria', 'comemorar', 'desejo', 'felicitações', 'animado', 'celebração',
+        'bom dia', 'boa tarde', 'boa noite', 'saudades', 'mensagem carinhosa'
+    ]
+    
+    text_lower = text.lower()
+    is_unproductive = any(keyword in text_lower for keyword in unproductive_keywords)
+    
+    if is_unproductive:
+        return {
+            'category': "improdutivo",
+            'confidence': 0.95  
+        }
+    
     candidate_labels = ["produtivo", "improdutivo"]
     classification_result = classifier(text, candidate_labels)
+    
+    category = classification_result['labels'][0]
+    confidence = classification_result['scores'][0]
+    
+    if category == "improdutivo":
+        confidence = max(0.3, confidence * 0.7)
+    
     return {
-        'category': classification_result['labels'][0],
-        'confidence': classification_result['scores'][0]
+        'category': category,
+        'confidence': float(confidence)
     }
 
 def generate_response(text, category):
     """
-    Gera uma resposta automática baseada na categoria do email usando IA
+    Gera uma resposta automática baseada na categoria do email
     """
     if category == "produtivo":
-        prompt = f"Como assistente virtual de uma empresa financeira, responda de forma profissional e útil ao seguinte email: '{text}'\nResposta:"
+        responses = [
+            "Agradecemos seu contato. Nossa equipe analisará sua solicitação e retornará em breve.",
+            "Recebemos sua solicitação e estamos processando sua requisição. Retornaremos em até 24 horas.",
+            "Obrigado por entrar em contato. Estamos verificando as informações e retornaremos em breve.",
+            "Sua solicitação foi recebida e está sendo processada. Aguarde nosso retorno.",
+            "Confirmamos o recebimento de sua mensagem. Nossa equipe entrará em contato em breve.",
+            "Agradecemos pelo seu email. Estamos analisando sua solicitação e retornaremos em breve.",
+            "Sua mensagem foi recebida com sucesso. Nossa equipe está trabalhando em sua solicitação.",
+            "Obrigado pelo contato. Estamos processando sua solicitação e retornaremos em breve.",
+            "Recebemos sua mensagem e estamos analisando o caso. Retornaremos em breve.",
+            "Agradecemos sua solicitação. Nossa equipe está verificando as informações necessárias."
+        ]
     else:
-        prompt = f"Como assistente virtual, responda de forma educada e breve ao seguinte email: '{text}'\nResposta:"
+        responses = [
+            "Agradecemos sua mensagem. Desejamos a você um ótimo dia!",
+            "Obrigado pelo contato. Ficamos felizes com sua mensagem!",
+            "Agradecemos sua mensagem amigável. Desejamos tudo de bom!",
+            "Obrigado por compartilhar suas boas energias conosco!",
+            "Agradecemos seu carinho e atenção. Tenha um excelente final de semana!",
+            "Obrigado pela mensagem. Desejamos a você uma ótima semana!",
+            "Agradecemos suas palavras. Que tenha um dia maravilhoso!",
+            "Obrigado pelo carinho. Desejamos a você tudo de melhor!",
+            "Agradecemos a mensagem. Que seu dia seja repleto de alegrias!",
+            "Obrigado pelas palavras. Desejamos a você sucesso em seus projetos!"
+        ]
     
-    inputs = tokenizer.encode(prompt, return_tensors="pt", truncation=True, max_length=512)
-    
-    with torch.no_grad():
-        outputs = model.generate(
-            inputs,
-            max_length=300, 
-            num_return_sequences=1,
-            temperature=0.8,
-            do_sample=True,
-            top_p=0.9,
-            repetition_penalty=1.2,
-            pad_token_id=tokenizer.eos_token_id,
-            no_repeat_ngram_size=3,
-            early_stopping=True
-        )
-    
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    
-    response = response.replace(prompt, "").strip()
-    
-    if not response.endswith('.'):
-        response += '.'
-    
-    return response
+    text_hash = hash(text) % len(responses)
+    return responses[text_hash]
